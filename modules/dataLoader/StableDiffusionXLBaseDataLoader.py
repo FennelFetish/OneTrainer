@@ -49,6 +49,7 @@ class StableDiffusionXLBaseDataLoader(
         if is_validation:
             config = copy.copy(config)
             config.batch_size = 1
+            config.multi_gpu = False
 
         self.__ds = self.create_dataset(
             config=config,
@@ -205,15 +206,6 @@ class StableDiffusionXLBaseDataLoader(
             output_names.append('text_encoder_2_hidden_state')
             output_names.append('text_encoder_2_pooled_state')
 
-        sort_names = output_names + ['concept']
-        output_names = output_names + [('concept.loss_weight', 'loss_weight')]
-
-        # add for calculating loss per concept
-        if config.validation:
-            output_names.append(('concept.name', 'concept_name'))
-            output_names.append(('concept.path', 'concept_path'))
-            output_names.append(('concept.seed', 'concept_seed'))
-
         def before_cache_image_fun():
             model.to(self.temp_device)
             model.vae_to(self.train_device)
@@ -222,7 +214,6 @@ class StableDiffusionXLBaseDataLoader(
 
         return self._output_modules_from_out_names(
             output_names=output_names,
-            sort_names=sort_names,
             config=config,
             before_cache_image_fun=before_cache_image_fun,
             use_conditioning_image=True,

@@ -6,6 +6,7 @@ from modules.ui.ConfigList import ConfigList
 from modules.util import path_util
 from modules.util.config.ConceptConfig import ConceptConfig
 from modules.util.config.TrainConfig import TrainConfig
+from modules.util.image_util import load_image
 from modules.util.ui import components
 from modules.util.ui.UIState import UIState
 
@@ -24,8 +25,10 @@ class ConceptTab(ConfigList):
             attr_name="concept_file_name",
             config_dir="training_concepts",
             default_config_name="concepts.json",
-            add_button_text="add concept",
+            add_button_text="Add Concept",
+            add_button_tooltip="Adds a new concept to the current config.",
             is_full_width=False,
+            show_toggle_button=True
         )
 
     def create_widget(self, master, element, i, open_command, remove_command, clone_command, save_command):
@@ -35,7 +38,7 @@ class ConceptTab(ConfigList):
         return ConceptConfig.default_values()
 
     def open_element_window(self, i, ui_state) -> ctk.CTkToplevel:
-        return ConceptWindow(self.master, self.current_config[i], ui_state[0], ui_state[1], ui_state[2])
+        return ConceptWindow(self.master, self.train_config, self.current_config[i], ui_state[0], ui_state[1], ui_state[2])
 
 
 class ConceptWidget(ctk.CTkFrame):
@@ -123,15 +126,16 @@ class ConceptWidget(ctk.CTkFrame):
         preview_path = "resources/icons/icon.png"
         glob_pattern = "**/*.*" if self.concept.include_subdirectories else "*.*"
 
-        if os.path.isdir(self.concept.path):
-            for path in pathlib.Path(self.concept.path).glob(glob_pattern):
+        concept_path = ConceptWindow.get_concept_path(self.concept.path)
+        if concept_path:
+            for path in pathlib.Path(concept_path).glob(glob_pattern):
                 extension = os.path.splitext(path)[1]
                 if path.is_file() and path_util.is_supported_image_extension(extension) \
-                        and not path.name.endswith("-masklabel.png"):
-                    preview_path = path_util.canonical_join(self.concept.path, path)
+                        and not path.name.endswith("-masklabel.png") and not path.name.endswith("-condlabel.png"):
+                    preview_path = path_util.canonical_join(concept_path, path)
                     break
 
-        image = Image.open(preview_path)
+        image = load_image(preview_path, convert_mode="RGBA")
         size = min(image.width, image.height)
         image = image.crop((
             (image.width - size) // 2,
@@ -139,7 +143,7 @@ class ConceptWidget(ctk.CTkFrame):
             (image.width - size) // 2 + size,
             (image.height - size) // 2 + size,
         ))
-        image = image.resize((150, 150), Image.Resampling.LANCZOS)
+        image = image.resize((150, 150), Image.Resampling.BILINEAR)
         return image
 
     def place_in_list(self):

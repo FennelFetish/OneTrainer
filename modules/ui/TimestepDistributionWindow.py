@@ -1,9 +1,11 @@
-import random
 
-from modules.modelSetup.mixin.ModelSetupNoiseMixin import ModelSetupNoiseMixin
+from modules.modelSetup.mixin.ModelSetupNoiseMixin import (
+    ModelSetupNoiseMixin,
+)
 from modules.util.config.TrainConfig import TrainConfig
 from modules.util.enum.TimestepDistribution import TimestepDistribution
 from modules.util.ui import components
+from modules.util.ui.ui_utils import set_window_icon
 from modules.util.ui.UIState import UIState
 
 import torch
@@ -25,9 +27,6 @@ class TimestepGenerator(ModelSetupNoiseMixin):
             noising_weight: float,
             noising_bias: float,
             timestep_shift: float,
-            dynamic_timestep_shifting: bool,
-            latent_width: int,
-            latent_height: int,
     ):
         super().__init__()
 
@@ -37,9 +36,6 @@ class TimestepGenerator(ModelSetupNoiseMixin):
         self.noising_weight = noising_weight
         self.noising_bias = noising_bias
         self.timestep_shift = timestep_shift
-        self.dynamic_timestep_shifting = dynamic_timestep_shifting
-        self.latent_width = latent_width
-        self.latent_height = latent_height
 
     def generate(self) -> Tensor:
         generator = torch.Generator()
@@ -52,7 +48,6 @@ class TimestepGenerator(ModelSetupNoiseMixin):
         config.noising_weight = self.noising_weight
         config.noising_bias = self.noising_bias
         config.timestep_shift = self.timestep_shift
-        config.dynamic_timestep_shifting = self.dynamic_timestep_shifting
 
 
         return self._get_timestep_discrete(
@@ -61,8 +56,6 @@ class TimestepGenerator(ModelSetupNoiseMixin):
             generator=generator,
             batch_size=1000000,
             config=config,
-            latent_width=self.latent_width,
-            latent_height=self.latent_height,
         )
 
 
@@ -74,30 +67,29 @@ class TimestepDistributionWindow(ctk.CTkToplevel):
             ui_state: UIState,
             *args, **kwargs,
     ):
-        ctk.CTkToplevel.__init__(self, parent, *args, **kwargs)
-
-        self.config = config
-        self.ui_state = ui_state
-
-        self.image_preview_file_index = 0
+        super().__init__(parent, *args, **kwargs)
 
         self.title("Timestep Distribution")
         self.geometry("900x600")
         self.resizable(True, True)
-        self.wait_visibility()
-        self.grab_set()
-        self.focus_set()
+
+        self.config = config
+        self.ui_state = ui_state
+        self.image_preview_file_index = 0
+        self.ax = None
+        self.canvas = None
 
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
 
-        self.ax = None
-        self.canvas = None
-
         frame = self.__content_frame(self)
         frame.grid(row=0, column=0, sticky='nsew')
-
         components.button(self, 1, 0, "ok", self.__ok)
+
+        self.wait_visibility()
+        self.after(200, lambda: set_window_icon(self))
+        self.grab_set()
+        self.focus_set()
 
     def __content_frame(self, master):
         frame = ctk.CTkScrollableFrame(master, fg_color="transparent")
@@ -141,7 +133,7 @@ class TimestepDistributionWindow(ctk.CTkToplevel):
 
         # dynamic timestep shifting
         components.label(frame, 6, 0, "Dynamic Timestep Shifting",
-                         tooltip="Dynamically shift the timestep distribution based on resolution. For the preview, a random resolution between 512 and 1024 is used, assuming a VAE scale factor of 8. During training, the actual resolution.")
+                         tooltip="Dynamically shift the timestep distribution based on resolution. If enabled, the shifting parameters are taken from the model's scheduler configuration and Timestep Shift is ignored. Dynamic Timestep Shifting is not shown in the preview.")
         components.switch(frame, 6, 1, self.ui_state, "dynamic_timestep_shifting")
 
 
@@ -177,7 +169,6 @@ class TimestepDistributionWindow(ctk.CTkToplevel):
         return frame
 
     def __update_preview(self):
-        resolution = random.randint(512, 1024)
         generator = TimestepGenerator(
             timestep_distribution=self.config.timestep_distribution,
             min_noising_strength=self.config.min_noising_strength,
@@ -185,9 +176,6 @@ class TimestepDistributionWindow(ctk.CTkToplevel):
             noising_weight=self.config.noising_weight,
             noising_bias=self.config.noising_bias,
             timestep_shift=self.config.timestep_shift,
-            dynamic_timestep_shifting=self.config.dynamic_timestep_shifting,
-            latent_width=resolution // 8,
-            latent_height=resolution // 8,
         )
 
         self.ax.cla()

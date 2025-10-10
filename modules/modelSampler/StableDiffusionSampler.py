@@ -11,13 +11,13 @@ from modules.util.enum.ImageFormat import ImageFormat
 from modules.util.enum.ModelType import ModelType
 from modules.util.enum.NoiseScheduler import NoiseScheduler
 from modules.util.enum.VideoFormat import VideoFormat
+from modules.util.image_util import load_image
 from modules.util.torch_util import torch_gc
 
 import torch
 from torch import nn
 from torchvision.transforms import transforms
 
-from PIL import Image
 from tqdm import tqdm
 
 
@@ -93,8 +93,10 @@ class StableDiffusionSampler(BaseModelSampler):
                 last_timestep = torch.ones(1, device=self.train_device, dtype=torch.int64) \
                                 * (noise_scheduler.config.num_train_timesteps - 1)
 
-                # add the final timestep to force predicting with zero snr
-                timesteps = torch.cat([last_timestep, timesteps])
+                # add the final timestep to force predicting with zero snr if it's not already here
+                if timesteps[0] != last_timestep:
+                    noise_scheduler.set_timesteps(diffusion_steps + 1, device=self.train_device)
+                    timesteps = torch.cat([last_timestep, timesteps])
 
             # prepare latent image
             num_channels_latents = unet.config.in_channels
@@ -223,13 +225,13 @@ class StableDiffusionSampler(BaseModelSampler):
                     ),
                 ])
 
-                image = Image.open(base_image_path).convert("RGB")
+                image = load_image(base_image_path, convert_mode="RGB")
                 image = t(image).to(
                     dtype=self.model.train_dtype.torch_dtype(),
                     device=self.train_device,
                 )
 
-                mask = Image.open(mask_image_path).convert("L")
+                mask = load_image(mask_image_path, convert_mode='L')
                 mask = t(mask).to(
                     dtype=self.model.train_dtype.torch_dtype(),
                     device=self.train_device,
@@ -298,8 +300,10 @@ class StableDiffusionSampler(BaseModelSampler):
                 last_timestep = torch.ones(1, device=self.train_device, dtype=torch.int64) \
                                 * (noise_scheduler.config.num_train_timesteps - 1)
 
-                # add the final timestep to force predicting with zero snr
-                timesteps = torch.cat([last_timestep, timesteps])
+                # add the final timestep to force predicting with zero snr if it's not already here
+                if timesteps[0] != last_timestep:
+                    noise_scheduler.set_timesteps(diffusion_steps + 1, device=self.train_device)
+                    timesteps = torch.cat([last_timestep, timesteps])
 
             # prepare latent image
             num_channels_latents = latent_conditioning_image.shape[1]

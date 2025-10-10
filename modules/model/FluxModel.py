@@ -1,3 +1,4 @@
+import math
 from contextlib import nullcontext
 from random import Random
 
@@ -57,10 +58,8 @@ class FluxModel(BaseModel):
     transformer: FluxTransformer2DModel | None
 
     # autocast context
-    autocast_context: torch.autocast | nullcontext
     text_encoder_2_autocast_context: torch.autocast | nullcontext
 
-    train_dtype: DataType
     text_encoder_2_train_dtype: DataType
 
     text_encoder_2_offload_conductor: LayerOffloadConductor | None
@@ -78,9 +77,6 @@ class FluxModel(BaseModel):
     transformer_lora: LoRAModuleWrapper | None
     lora_state_dict: dict | None
 
-    sd_config: dict | None
-    sd_config_filename: str | None
-
     def __init__(
             self,
             model_type: ModelType,
@@ -97,10 +93,8 @@ class FluxModel(BaseModel):
         self.vae = None
         self.transformer = None
 
-        self.autocast_context = nullcontext()
         self.text_encoder_2_autocast_context = nullcontext()
 
-        self.train_dtype = DataType.FLOAT_32
         self.text_encoder_2_train_dtype = DataType.FLOAT_32
 
         self.text_encoder_2_offload_conductor = None
@@ -115,6 +109,13 @@ class FluxModel(BaseModel):
         self.text_encoder_2_lora = None
         self.transformer_lora = None
         self.lora_state_dict = None
+
+    def adapters(self) -> list[LoRAModuleWrapper]:
+        return [a for a in [
+            self.text_encoder_1_lora,
+            self.text_encoder_2_lora,
+            self.transformer_lora,
+        ] if a is not None]
 
     def all_embeddings(self) -> list[FluxModelEmbedding]:
         return self.additional_embeddings \
@@ -297,7 +298,13 @@ class FluxModel(BaseModel):
 
         return text_encoder_2_output, pooled_text_encoder_1_output
 
-    def prepare_latent_image_ids(self, height, width, device, dtype):
+    def prepare_latent_image_ids(
+            self,
+            height: int,
+            width: int,
+            device: torch.device,
+            dtype: torch.dtype,
+    ) -> Tensor:
         latent_image_ids = torch.zeros(height // 2, width // 2, 3)
         latent_image_ids[..., 1] = latent_image_ids[..., 1] + torch.arange(height // 2)[:, None]
         latent_image_ids[..., 2] = latent_image_ids[..., 2] + torch.arange(width // 2)[None, :]
@@ -310,15 +317,16 @@ class FluxModel(BaseModel):
 
         return latent_image_ids.to(device=device, dtype=dtype)
 
-    def pack_latents(self, latents, batch_size, num_channels_latents, height, width):
-        latents = latents.view(batch_size, num_channels_latents, height // 2, 2, width // 2, 2)
+    def pack_latents(self, latents: Tensor) -> Tensor:
+        batch_size, channels, height, width = latents.shape
+        latents = latents.view(batch_size, channels, height // 2, 2, width // 2, 2)
         latents = latents.permute(0, 2, 4, 1, 3, 5)
-        latents = latents.reshape(batch_size, (height // 2) * (width // 2), num_channels_latents * 4)
+        latents = latents.reshape(batch_size, (height // 2) * (width // 2), channels * 4)
 
         return latents
 
-    def unpack_latents(self, latents, height, width):
-        batch_size, num_patches, channels = latents.shape
+    def unpack_latents(self, latents, height: int, width: int):
+        batch_size, _, channels = latents.shape
 
         height = height // 2
         width = width // 2
@@ -329,3 +337,16 @@ class FluxModel(BaseModel):
         latents = latents.reshape(batch_size, channels // (2 * 2), height * 2, width * 2)
 
         return latents
+
+    def calculate_timestep_shift(self, latent_width: int, latent_height: int):
+        base_seq_len = self.noise_scheduler.config.base_image_seq_len
+        max_seq_len = self.noise_scheduler.config.max_image_seq_len
+        base_shift = self.noise_scheduler.config.base_shift
+        max_shift = self.noise_scheduler.config.max_shift
+        patch_size = 2
+
+        image_seq_len = (latent_width // patch_size) * (latent_height // patch_size)
+        m = (max_shift - base_shift) / (max_seq_len - base_seq_len)
+        b = base_shift - m * base_seq_len
+        mu = image_seq_len * m + b
+        return math.exp(mu)

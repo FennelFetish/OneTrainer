@@ -1,6 +1,7 @@
 from abc import ABCMeta
 from random import Random
 
+import modules.util.multi_gpu_util as multi
 from modules.model.StableDiffusion3Model import StableDiffusion3Model, StableDiffusion3ModelEmbedding
 from modules.modelSetup.BaseModelSetup import BaseModelSetup
 from modules.modelSetup.mixin.ModelSetupDebugMixin import ModelSetupDebugMixin
@@ -24,6 +25,10 @@ from modules.util.TrainProgress import TrainProgress
 import torch
 from torch import Tensor
 
+PRESETS = {
+    "attn-only": ["attn"],
+    "full": [],
+}
 
 class BaseStableDiffusion3Setup(
     BaseModelSetup,
@@ -96,6 +101,7 @@ class BaseStableDiffusion3Setup(
             embedding_state = model.embedding_state_dicts.get(embedding_config.uuid, None)
             if embedding_state is None:
                 embedding_state_1 = self._create_new_embedding(
+                    model,
                     embedding_config,
                     model.tokenizer_1,
                     model.text_encoder_1,
@@ -106,6 +112,7 @@ class BaseStableDiffusion3Setup(
                 )
 
                 embedding_state_2 = self._create_new_embedding(
+                    model,
                     embedding_config,
                     model.tokenizer_2,
                     model.text_encoder_2,
@@ -116,6 +123,7 @@ class BaseStableDiffusion3Setup(
                 )
 
                 embedding_state_3 = self._create_new_embedding(
+                    model,
                     embedding_config,
                     model.tokenizer_3,
                     model.text_encoder_3,
@@ -242,7 +250,7 @@ class BaseStableDiffusion3Setup(
             deterministic: bool = False,
     ) -> dict:
         with model.autocast_context:
-            batch_seed = 0 if deterministic else train_progress.global_step
+            batch_seed = 0 if deterministic else train_progress.global_step * multi.world_size() + multi.rank()
             generator = torch.Generator(device=config.train_device)
             generator.manual_seed(batch_seed)
             rand = Random(batch_seed)
@@ -295,8 +303,6 @@ class BaseStableDiffusion3Setup(
                 generator,
                 scaled_latent_image.shape[0],
                 config,
-                latent_height=scaled_latent_image.shape[-2],
-                latent_width=scaled_latent_image.shape[-1],
             )
 
             scaled_noisy_latent_image, sigma = self._add_noise_discrete(

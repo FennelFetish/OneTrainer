@@ -1,6 +1,7 @@
 from abc import ABCMeta
 from random import Random
 
+import modules.util.multi_gpu_util as multi
 from modules.model.StableDiffusionXLModel import StableDiffusionXLModel, StableDiffusionXLModelEmbedding
 from modules.modelSetup.BaseModelSetup import BaseModelSetup
 from modules.modelSetup.mixin.ModelSetupDebugMixin import ModelSetupDebugMixin
@@ -23,6 +24,11 @@ from modules.util.TrainProgress import TrainProgress
 import torch
 from torch import Tensor
 
+PRESETS = {
+    "attn-mlp": ["attentions"],
+    "attn-only": ["attn"],
+    "full": [],
+}
 
 class BaseStableDiffusionXLSetup(
     BaseModelSetup,
@@ -85,6 +91,7 @@ class BaseStableDiffusionXLSetup(
             embedding_state = model.embedding_state_dicts.get(embedding_config.uuid, None)
             if embedding_state is None:
                 embedding_state_1 = self._create_new_embedding(
+                    model,
                     embedding_config,
                     model.tokenizer_1,
                     model.text_encoder_1,
@@ -95,6 +102,7 @@ class BaseStableDiffusionXLSetup(
                 )
 
                 embedding_state_2 = self._create_new_embedding(
+                    model,
                     embedding_config,
                     model.tokenizer_2,
                     model.text_encoder_2,
@@ -184,7 +192,7 @@ class BaseStableDiffusionXLSetup(
             deterministic: bool = False,
     ) -> dict:
         with model.autocast_context:
-            batch_seed = 0 if deterministic else train_progress.global_step
+            batch_seed = 0 if deterministic else train_progress.global_step * multi.world_size() + multi.rank()
             generator = torch.Generator(device=config.train_device)
             generator.manual_seed(batch_seed)
             rand = Random(batch_seed)
@@ -216,14 +224,20 @@ class BaseStableDiffusionXLSetup(
             if config.model_type.has_conditioning_image_input():
                 scaled_latent_conditioning_image = batch['latent_conditioning_image'] * vae_scaling_factor
 
-            latent_noise = self._create_noise(scaled_latent_image, config, generator)
-
             timestep = self._get_timestep_discrete(
                 model.noise_scheduler.config['num_train_timesteps'],
                 deterministic,
                 generator,
                 scaled_latent_image.shape[0],
                 config,
+            )
+
+            latent_noise = self._create_noise(
+                scaled_latent_image,
+                config,
+                generator,
+                timestep,
+                model.noise_scheduler.betas,
             )
 
             scaled_noisy_latent_image = self._add_noise_discrete(
