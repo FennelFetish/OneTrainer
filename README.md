@@ -1,3 +1,19 @@
+# Changes in this fork
+
+Needs MGDS from my fork: https://github.com/FennelFetish/mgds
+
+- CLIP long prompt support for captions exceeding CLIP's 75-token limit.
+  - Max token count is configurable in the `data` tab.
+  - In the training config, the setting is called `clip_max_token_chunks` and takes the number of chunks (1-4), not tokens.
+  - Currently only used for SDXL.
+- Masks are scaled with nearest-neighbor interpolation.
+  - Avoids blur and bleeding. Black regions in the masks are kept black.
+  - Works nicely together with [qapyq](https://github.com/FennelFetish/qapyq)'s Quantize mask operation, or erode the mask by 8.
+- Environment variables for UI settings:
+  - `OT_UI_APPEARANCE_MODE`: Set to `dark` or `light` to change the color theme.
+  - `OT_UI_SCALE`: Accepts float values. `1.0` is 100% scaling.
+
+
 # OneTrainer
 
 OneTrainer is a one-stop solution for all your Diffusion training needs.
