@@ -72,7 +72,7 @@ class QwenBaseDataLoader(
         rescale_image = RescaleImageChannels(image_in_name='image', image_out_name='image', in_range_min=0, in_range_max=1, out_range_min=-1, out_range_max=1)
         encode_image = EncodeVAE(in_name='image', out_name='latent_image_distribution', vae=model.vae, autocast_contexts=[model.autocast_context], dtype=model.train_dtype.torch_dtype())
         image_sample = SampleVAEDistribution(in_name='latent_image_distribution', out_name='latent_image', mode='mean')
-        downscale_mask = ScaleImage(in_name='mask', out_name='latent_mask', factor=0.125)
+        downscale_mask = ScaleImage(in_name='mask', out_name='latent_mask', factor=1/8, interpolation="nearest")
         tokenize_prompt = Tokenize(in_name='prompt', tokens_out_name='tokens', mask_out_name='tokens_mask', tokenizer=model.tokenizer, max_token_length=PROMPT_MAX_LENGTH, format_text=DEFAULT_PROMPT_TEMPLATE, additional_format_text_tokens=DEFAULT_PROMPT_TEMPLATE_CROP_START)
         encode_prompt = EncodeQwenText(tokens_name='tokens', tokens_attention_mask_in_name='tokens_mask', hidden_state_out_name='text_encoder_hidden_state', tokens_attention_mask_out_name='tokens_mask', text_encoder=model.text_encoder, hidden_state_output_index=-1, autocast_contexts=[model.autocast_context], dtype=model.train_dtype.torch_dtype(), crop_start=DEFAULT_PROMPT_TEMPLATE_CROP_START)
 
@@ -188,7 +188,7 @@ class QwenBaseDataLoader(
             model.vae_to(self.train_device)
 
         decode_image = DecodeVAE(in_name='latent_image', out_name='decoded_image', vae=model.vae, autocast_contexts=[model.autocast_context], dtype=model.train_dtype.torch_dtype())
-        upscale_mask = ScaleImage(in_name='latent_mask', out_name='decoded_mask', factor=8)
+        upscale_mask = ScaleImage(in_name='latent_mask', out_name='decoded_mask', factor=8, interpolation="nearest")
         decode_prompt = DecodeTokens(in_name='tokens', out_name='decoded_prompt', tokenizer=model.tokenizer)
 
         #FIXME https://github.com/Nerogar/OneTrainer/issues/1015
