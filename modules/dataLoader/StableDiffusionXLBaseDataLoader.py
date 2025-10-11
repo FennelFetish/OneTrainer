@@ -22,7 +22,6 @@ from mgds.pipelineModules.SampleVAEDistribution import SampleVAEDistribution
 from mgds.pipelineModules.SaveImage import SaveImage
 from mgds.pipelineModules.SaveText import SaveText
 from mgds.pipelineModules.ScaleImage import ScaleImage
-from mgds.pipelineModules.Tokenize import Tokenize
 from mgds.pipelineModules.VariationSorting import VariationSorting
 
 import torch
@@ -75,26 +74,35 @@ class StableDiffusionXLBaseDataLoader(
         add_embeddings_to_prompt_2 = MapData(in_name='prompt', out_name='prompt_2', map_fn=model.add_text_encoder_2_embeddings_to_prompt)
         encode_conditioning_image = EncodeVAE(in_name='conditioning_image', out_name='latent_conditioning_image_distribution', vae=model.vae, autocast_contexts=[model.autocast_context, model.vae_autocast_context], dtype=model.vae_train_dtype.torch_dtype())
         conditioning_image_sample = SampleVAEDistribution(in_name='latent_conditioning_image_distribution', out_name='latent_conditioning_image', mode='mean')
-        # tokenize_prompt_1 = Tokenize(in_name='prompt_1', tokens_out_name='tokens_1', mask_out_name='tokens_mask_1', tokenizer=model.tokenizer_1, max_token_length=model.tokenizer_1.model_max_length)
-        # tokenize_prompt_2 = Tokenize(in_name='prompt_2', tokens_out_name='tokens_2', mask_out_name='tokens_mask_2', tokenizer=model.tokenizer_2, max_token_length=model.tokenizer_2.model_max_length)
-        # encode_prompt_1 = EncodeClipText(in_name='tokens_1', tokens_attention_mask_in_name=None, hidden_state_out_name='text_encoder_1_hidden_state', pooled_out_name=None, add_layer_norm=False, text_encoder=model.text_encoder_1, hidden_state_output_index=-(2 + config.text_encoder_layer_skip), autocast_contexts=[model.autocast_context], dtype=model.train_dtype.torch_dtype())
-        # encode_prompt_2 = EncodeClipText(in_name='tokens_2', tokens_attention_mask_in_name=None, hidden_state_out_name='text_encoder_2_hidden_state', pooled_out_name='text_encoder_2_pooled_state', add_layer_norm=False, text_encoder=model.text_encoder_2, hidden_state_output_index=-(2 + config.text_encoder_2_layer_skip), autocast_contexts=[model.autocast_context], dtype=model.train_dtype.torch_dtype())
 
-        # TODO: Does this work with embeddings added by MapData?
-        chunk_text = ChunkText(text_in_name='prompt', text_chunks_out_name='prompt_chunks')
-        token_chunks = 3
-        tokenize_prompt_1 = ChunkTokenize(text_chunks_in_name='prompt_chunks', token_chunks_out_name="tokens_1", mask_chunks_out_name="tokens_mask_1", tokenizer=model.tokenizer_1, max_num_chunks=token_chunks)
-        tokenize_prompt_2 = ChunkTokenize(text_chunks_in_name='prompt_chunks', token_chunks_out_name="tokens_2", mask_chunks_out_name="tokens_mask_2", tokenizer=model.tokenizer_2, max_num_chunks=token_chunks)
+        chunk_text_1 = ChunkText(text_in_name='prompt_1', text_chunks_out_name='prompt_chunks_1')
+        chunk_text_2 = ChunkText(text_in_name='prompt_2', text_chunks_out_name='prompt_chunks_2')
 
-        # With attention masks
-        encode_prompt_1 = EncodeClipText(in_name='tokens_1', tokens_attention_mask_in_name='tokens_mask_1', hidden_state_out_name='text_encoder_1_hidden_state', pooled_out_name=None, add_layer_norm=False, text_encoder=model.text_encoder_1, hidden_state_output_index=-(2 + config.text_encoder_layer_skip), autocast_contexts=[model.autocast_context], dtype=model.train_dtype.torch_dtype())
-        encode_prompt_2 = EncodeClipText(in_name='tokens_2', tokens_attention_mask_in_name='tokens_mask_2', hidden_state_out_name='text_encoder_2_hidden_state', pooled_out_name='text_encoder_2_pooled_state', add_layer_norm=False, text_encoder=model.text_encoder_2, hidden_state_output_index=-(2 + config.text_encoder_2_layer_skip), autocast_contexts=[model.autocast_context], dtype=model.train_dtype.torch_dtype())
+        tokenize_prompt_1 = ChunkTokenize(text_chunks_in_name='prompt_chunks_1', token_chunks_out_name="tokens_1", mask_chunks_out_name="tokens_mask_1", tokenizer=model.tokenizer_1, max_num_chunks=config.clip_max_token_chunks)
+        tokenize_prompt_2 = ChunkTokenize(text_chunks_in_name='prompt_chunks_2', token_chunks_out_name="tokens_2", mask_chunks_out_name="tokens_mask_2", tokenizer=model.tokenizer_2, max_num_chunks=config.clip_max_token_chunks)
+
+        encode_prompt_1 = EncodeClipText(
+            in_name='tokens_1', tokens_attention_mask_in_name='tokens_mask_1',
+            hidden_state_out_name='text_encoder_1_hidden_state', pooled_out_name=None,
+            text_encoder=model.text_encoder_1, add_layer_norm=False,
+            hidden_state_output_index = -(2 + config.text_encoder_layer_skip),
+            autocast_contexts=[model.autocast_context],
+            dtype=model.train_dtype.torch_dtype()
+        )
+
+        encode_prompt_2 = EncodeClipText(
+            in_name='tokens_2', tokens_attention_mask_in_name='tokens_mask_2',
+            hidden_state_out_name='text_encoder_2_hidden_state', pooled_out_name='text_encoder_2_pooled_state',
+            text_encoder=model.text_encoder_2, add_layer_norm=False,
+            hidden_state_output_index = -(2 + config.text_encoder_2_layer_skip),
+            autocast_contexts=[model.autocast_context],
+            dtype=model.train_dtype.torch_dtype()
+        )
 
         modules = [
             rescale_image, encode_image, image_sample,
-            chunk_text,
-            add_embeddings_to_prompt_1, tokenize_prompt_1,
-            add_embeddings_to_prompt_2, tokenize_prompt_2,
+            add_embeddings_to_prompt_1, chunk_text_1, tokenize_prompt_1,
+            add_embeddings_to_prompt_2, chunk_text_2, tokenize_prompt_2,
         ]
 
         if config.masked_training or config.model_type.has_mask_input():
