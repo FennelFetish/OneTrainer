@@ -46,7 +46,6 @@ from modules.util.ui.UIState import UIState
 import torch
 
 import customtkinter as ctk
-from customtkinter import AppearanceModeTracker
 
 # chunk for forcing Windows to ignore DPI scaling when moving between monitors
 # fixes the long standing transparency bug https://github.com/Nerogar/OneTrainer/issues/90
@@ -96,11 +95,8 @@ class TrainUI(ctk.CTk):
         self.title("OneTrainer")
         self.geometry("1100x740")
 
+        self._apply_appearance_settings()
         self.after(100, lambda: self._set_icon())
-
-        # more efficient version of ctk.set_appearance_mode("System"), which retrieves the system theme on each main loop iteration
-        ctk.set_appearance_mode("Light" if AppearanceModeTracker.detect_appearance_mode() == 0 else "Dark")
-        ctk.set_default_color_theme("blue")
 
         self.train_config = TrainConfig.default_values()
         self.ui_state = UIState(self, self.train_config)
@@ -161,6 +157,29 @@ class TrainUI(ctk.CTk):
     def _set_icon(self):
         """Set the window icon safely after window is ready"""
         set_window_icon(self)
+
+    def _apply_appearance_settings(self):
+        # Load appearance mode from env
+        appearance_mode = os.environ["OT_UI_APPEARANCE_MODE"].strip().lower()
+        if appearance_mode not in ("dark", "light"):
+            if appearance_mode:
+                print(f"Unrecognized appearance mode: {appearance_mode}")
+
+            # more efficient version of ctk.set_appearance_mode("System"), which retrieves the system theme on each main loop iteration
+            from customtkinter import AppearanceModeTracker
+            appearance_mode = "light" if AppearanceModeTracker.detect_appearance_mode() == 0 else "dark"
+
+        ctk.set_appearance_mode(appearance_mode)
+        ctk.set_default_color_theme("dark-blue" if appearance_mode == "dark" else "blue")
+
+        # Load UI scaling from env
+        try:
+            if ui_scale_str := os.environ["OT_UI_SCALE"].strip():
+                ui_scale = float(ui_scale_str)
+                ctk.set_widget_scaling(ui_scale)
+                ctk.set_window_scaling(ui_scale)
+        except Exception as ex:
+            print(f"Error while setting UI scaling: {ex}")
 
     def bottom_bar(self, master):
         frame = ctk.CTkFrame(master=master, corner_radius=0)
