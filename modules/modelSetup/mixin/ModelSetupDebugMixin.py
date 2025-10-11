@@ -41,8 +41,15 @@ class ModelSetupDebugMixin(metaclass=ABCMeta):
             f.write(text)
 
     def _decode_tokens(self, tokens: Tensor, tokenizer):
+        # Shape: (batches, chunks, tokens) or (batches, tokens)
+        # To:    (chunks*tokens) of first batch
+        tokens = tokens[0]
+        if len(tokens.shape) > 1:
+            num_chunks, num_tokens = tokens.shape
+            tokens = tokens.reshape(num_chunks * num_tokens)
+
         return tokenizer.decode(
-            token_ids=tokens[0],
+            token_ids=tokens,
             skip_special_tokens=True,
             clean_up_tokenization_spaces=True,
         )

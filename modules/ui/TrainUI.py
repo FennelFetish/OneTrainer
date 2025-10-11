@@ -364,6 +364,16 @@ class TrainUI(ctk.CTk):
                          tooltip="Clears the cache directory before starting to train. Only disable this if you want to continue using the same cached data. Disabling this can lead to errors, if other settings are changed during a restart")
         components.switch(frame, 2, 1, self.ui_state, "clear_cache_before_training")
 
+        # CLIP max tokens
+        components.label(frame, 3, 0, "CLIP Max Tokens",
+                         tooltip="Maximum token count for captions when using a CLIP text encoder. If the caption is longer, it is truncated to fit the selected token count. Shorter captions are padded to the maximum length. Note that larger numbers will use more disk space for caching.")
+        components.options_kv(frame, 3, 1, [
+            ("75",  1),
+            ("150", 2),
+            ("225", 3),
+            ("300", 4),
+        ], self.ui_state, "clip_max_token_chunks")
+
         frame.pack(fill="both", expand=1)
         return frame
 
