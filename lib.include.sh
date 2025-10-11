@@ -30,6 +30,9 @@ export OT_CUDA_LOWMEM_MODE="${OT_CUDA_LOWMEM_MODE:-false}"
 export OT_PLATFORM_REQUIREMENTS="${OT_PLATFORM_REQUIREMENTS:-detect}"
 export OT_SCRIPT_DEBUG="${OT_SCRIPT_DEBUG:-false}"
 
+export OT_UI_APPEARANCE_MODE="${OT_UI_APPEARANCE_MODE}"
+export OT_UI_SCALE="${OT_UI_SCALE}"
+
 # Internal environment variables.
 # NOTE: Version check supports "3", "3.1" and "3.1.5" specifier formats.
 export OT_PYTHON_VERSION_MINIMUM="3.10"
