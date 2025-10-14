@@ -35,6 +35,44 @@ class StableDiffusionXLSampler(BaseModelSampler):
         self.model_type = model_type
         self.pipeline = model.create_pipeline()
 
+    def __embed_prompts(
+            self,
+            prompt: str,
+            negative_prompt: str,
+            text_encoder_1_layer_skip: int,
+            text_encoder_2_layer_skip: int
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        # For long prompts: Encode the longer prompt first (positive/negative) with dynamic length.
+        # Then pad the other prompt to the same chunk count, because concatenation requires matching shapes.
+        prompts = (prompt, negative_prompt)
+        order = (0, 1) if len(prompt) >= len(negative_prompt) else (1, 0)
+        outputs: list[tuple] = [None, None]
+        max_tokens = -1
+
+        self.model.text_encoder_to(self.train_device)
+
+        for i in order:
+            outputs[i] = self.model.combine_text_encoder_output(*self.model.encode_text(
+                text=prompts[i],
+                train_device=self.train_device,
+                text_encoder_1_layer_skip=text_encoder_1_layer_skip,
+                text_encoder_2_layer_skip=text_encoder_2_layer_skip,
+                max_tokens=max_tokens
+            ))
+
+            max_tokens = outputs[i][0].shape[-2]
+
+        prompt_embedding, pooled_text_encoder_2_output = outputs[0]
+        negative_prompt_embedding, negative_pooled_text_encoder_2_output = outputs[1]
+
+        combined_prompt_embedding = torch.cat([negative_prompt_embedding, prompt_embedding]) \
+            .to(dtype=self.model.train_dtype.torch_dtype())
+
+        self.model.text_encoder_to(self.temp_device)
+        torch_gc()
+
+        return combined_prompt_embedding, pooled_text_encoder_2_output, negative_pooled_text_encoder_2_output
+
     @torch.no_grad()
     def __sample_base(
             self,
@@ -67,27 +105,8 @@ class StableDiffusionXLSampler(BaseModelSampler):
             vae_scale_factor = self.pipeline.vae_scale_factor
 
             # prepare prompt
-            self.model.text_encoder_to(self.train_device)
-
-            prompt_embedding, pooled_text_encoder_2_output = self.model.combine_text_encoder_output(*self.model.encode_text(
-                text=prompt,
-                train_device=self.train_device,
-                text_encoder_1_layer_skip=text_encoder_1_layer_skip,
-                text_encoder_2_layer_skip=text_encoder_2_layer_skip,
-            ))
-
-            negative_prompt_embedding, negative_pooled_text_encoder_2_output = self.model.combine_text_encoder_output(*self.model.encode_text(
-                text=negative_prompt,
-                train_device=self.train_device,
-                text_encoder_1_layer_skip=text_encoder_1_layer_skip,
-                text_encoder_2_layer_skip=text_encoder_2_layer_skip,
-            ))
-
-            combined_prompt_embedding = torch.cat([negative_prompt_embedding, prompt_embedding]) \
-                .to(dtype=self.model.train_dtype.torch_dtype())
-
-            self.model.text_encoder_to(self.temp_device)
-            torch_gc()
+            combined_prompt_embedding, pooled_text_encoder_2_output, negative_pooled_text_encoder_2_output = \
+                self.__embed_prompts(prompt, negative_prompt, text_encoder_1_layer_skip, text_encoder_2_layer_skip)
 
             # prepare timesteps
             noise_scheduler.set_timesteps(diffusion_steps, device=self.train_device)
@@ -305,29 +324,8 @@ class StableDiffusionXLSampler(BaseModelSampler):
             torch_gc()
 
             # prepare prompt
-            self.model.text_encoder_to(self.train_device)
-
-            prompt_embedding, pooled_text_encoder_2_output = self.model.combine_text_encoder_output(
-                *self.model.encode_text(
-                    text=prompt,
-                    train_device=self.train_device,
-                    text_encoder_1_layer_skip=text_encoder_1_layer_skip,
-                    text_encoder_2_layer_skip=text_encoder_2_layer_skip,
-                ))
-
-            negative_prompt_embedding, negative_pooled_text_encoder_2_output = self.model.combine_text_encoder_output(
-                *self.model.encode_text(
-                    text=negative_prompt,
-                    train_device=self.train_device,
-                    text_encoder_1_layer_skip=text_encoder_1_layer_skip,
-                    text_encoder_2_layer_skip=text_encoder_2_layer_skip,
-                ))
-
-            combined_prompt_embedding = torch.cat([negative_prompt_embedding, prompt_embedding]) \
-                .to(dtype=self.model.train_dtype.torch_dtype())
-
-            self.model.text_encoder_to(self.temp_device)
-            torch_gc()
+            combined_prompt_embedding, pooled_text_encoder_2_output, negative_pooled_text_encoder_2_output = \
+                self.__embed_prompts(prompt, negative_prompt, text_encoder_1_layer_skip, text_encoder_2_layer_skip)
 
             # prepare timesteps
             noise_scheduler.set_timesteps(diffusion_steps, device=self.train_device)
