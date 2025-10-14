@@ -11,6 +11,9 @@ from modules.util.convert.rescale_noise_scheduler_to_zero_terminal_snr import (
 from modules.util.enum.DataType import DataType
 from modules.util.enum.ModelType import ModelType
 
+from mgds.pipelineModules.ChunkText import ChunkText
+from mgds.pipelineModules.ChunkTokenize import ChunkTokenize, ChunkTokenizerData
+
 import torch
 from torch import Tensor
 
@@ -95,7 +98,7 @@ class StableDiffusionXLModel(BaseModel):
         self.embedding = None
         self.additional_embeddings = []
         self.embedding_wrapper_1 = None
-        self.embedding_wrapper_1 = None
+        self.embedding_wrapper_2 = None
 
         self.text_encoder_1_lora = None
         self.text_encoder_2_lora = None
@@ -202,8 +205,11 @@ class StableDiffusionXLModel(BaseModel):
             batch_size: int = 1,
             rand: Random | None = None,
             text: str = None,
+            max_tokens: int = -1,
             tokens_1: Tensor = None,
             tokens_2: Tensor = None,
+            attention_mask_1: Tensor = None,
+            attention_mask_2: Tensor = None,
             text_encoder_1_layer_skip: int = 0,
             text_encoder_2_layer_skip: int = 0,
             text_encoder_1_output: Tensor = None,
@@ -212,26 +218,27 @@ class StableDiffusionXLModel(BaseModel):
             text_encoder_2_dropout_probability: float | None = None,
             pooled_text_encoder_2_output: Tensor = None,
     ) -> tuple[Tensor, Tensor, Tensor]:
+        # Sampling needs to tokenize the text
         if tokens_1 is None and text is not None:
-            tokenizer_output = self.tokenizer_1(
-                self.add_text_encoder_1_embeddings_to_prompt(text),
-                padding='max_length',
-                truncation=True,
-                max_length=77,
-                return_tensors="pt",
+            tokens_1, attention_mask_1 = ChunkTokenize.tokenize(
+                ChunkTokenizerData.with_max_length(self.tokenizer_1, max_tokens),
+                ChunkText.chunk_text(self.add_text_encoder_1_embeddings_to_prompt(text)),
+                device=self.text_encoder_1.device
             )
-            tokens_1 = tokenizer_output.input_ids.to(self.text_encoder_1.device)
+            tokens_1 = tokens_1.unsqueeze(0) # Add batch dimension
 
         if tokens_2 is None and text is not None:
-            tokenizer_output = self.tokenizer_2(
-                self.add_text_encoder_2_embeddings_to_prompt(text),
-                padding='max_length',
-                truncation=True,
-                max_length=77,
-                return_tensors="pt",
+            tokens_2, attention_mask_2 = ChunkTokenize.tokenize(
+                ChunkTokenizerData.with_max_length(self.tokenizer_2, max_tokens),
+                ChunkText.chunk_text(self.add_text_encoder_2_embeddings_to_prompt(text)),
+                device=self.text_encoder_2.device
             )
-            tokens_2 = tokenizer_output.input_ids.to(self.text_encoder_2.device)
+            tokens_2 = tokens_2.unsqueeze(0) # Add batch dimension
 
+        # When training the text encoder, the text embedding is not cached.
+        # The tokens are re-encoded on each step here, but passed without attention mask.
+        # For training the CLIP text encoders, not using masks is better anyway,
+        # because original CLIP was trained without attention masks.
         text_encoder_1_output, _ = encode_clip(
             text_encoder=self.text_encoder_1,
             tokens=tokens_1,
@@ -239,7 +246,8 @@ class StableDiffusionXLModel(BaseModel):
             layer_skip=text_encoder_1_layer_skip,
             text_encoder_output=text_encoder_1_output,
             add_pooled_output=False,
-            use_attention_mask=False,
+            attention_mask=attention_mask_1,
+            use_attention_mask=True,
             add_layer_norm=False,
         )
 
@@ -251,7 +259,8 @@ class StableDiffusionXLModel(BaseModel):
             text_encoder_output=text_encoder_2_output,
             add_pooled_output=True,
             pooled_text_encoder_output=pooled_text_encoder_2_output,
-            use_attention_mask=False,
+            attention_mask=attention_mask_2,
+            use_attention_mask=True,
             add_layer_norm=False,
         )
 
