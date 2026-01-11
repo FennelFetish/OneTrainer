@@ -23,9 +23,10 @@ from mgds.pipelineModules.ImageToVideo import ImageToVideo
 from mgds.pipelineModules.InlineAspectBatchSorting import InlineAspectBatchSorting
 from mgds.pipelineModules.InlineDistributedSampler import InlineDistributedSampler
 from mgds.pipelineModules.LoadImage import LoadImage
+from mgds.pipelineModules.LoadJson import LoadJson
 from mgds.pipelineModules.LoadMultipleTexts import LoadMultipleTexts
 from mgds.pipelineModules.LoadVideo import LoadVideo
-from mgds.pipelineModules.MapData import MapData
+from mgds.pipelineModules.MapMultiData import MapMultiData
 from mgds.pipelineModules.ModifyPath import ModifyPath
 from mgds.pipelineModules.RandomBrightness import RandomBrightness
 from mgds.pipelineModules.RandomCircularMaskShrink import RandomCircularMaskShrink
@@ -72,9 +73,10 @@ class DataLoaderText2ImageMixin:
 
         mask_path = ModifyPath(in_name='image_path', out_name='mask_path', postfix='-masklabel', extension='.png')
         cond_path = ModifyPath(in_name='image_path', out_name='cond_path', postfix='-condlabel', extension='.png')
+        json_path = ModifyPath(in_name='image_path', out_name='json_path', postfix='', extension='.json')
         sample_prompt_path = ModifyPath(in_name='image_path', out_name='sample_prompt_path', postfix='', extension='.txt')
 
-        modules = [download_datasets, collect_paths, sample_prompt_path]
+        modules = [download_datasets, collect_paths, sample_prompt_path, json_path]
 
         if config.masked_training:
             modules.append(mask_path)
@@ -99,6 +101,7 @@ class DataLoaderText2ImageMixin:
 
         load_cond_image = LoadImage(path_in_name='cond_path', image_out_name='custom_conditioning_image', range_min=0, range_max=1, supported_extensions=path_util.supported_image_extensions(), dtype=train_dtype.torch_dtype())
 
+        # prompt
         load_sample_prompts = LoadMultipleTexts(path_in_name='sample_prompt_path', texts_out_name='sample_prompts')
         load_concept_prompts = LoadMultipleTexts(path_in_name='concept.text.prompt_path', texts_out_name='concept_prompts')
         filename_prompt = GetFilename(path_in_name='image_path', filename_out_name='filename_prompt', include_extension=False)
@@ -109,12 +112,23 @@ class DataLoaderText2ImageMixin:
         }, default_in_name='sample_prompts')
         select_random_text = SelectRandomText(texts_in_name='prompts', text_out_name='prompt')
 
+        # per-sample config override
+        load_sample_config_json = LoadJson(path_in_name='json_path', key_in_name='concept.overrides.per_sample_config_key', data_out_name='per_sample_config_json')
+        select_sample_config_input = SelectInput(setting_name='concept.overrides.per_sample_config_source', out_name='sample_config_overrides', setting_to_in_name_map={
+            'disabled': None,
+            'json': 'per_sample_config_json',
+        })
+
+        # build module list
         modules = [load_image, load_video]
 
         if allow_video:
             modules.append(image_to_video)
 
-        modules.extend([load_sample_prompts, load_concept_prompts, filename_prompt, select_prompt_input, select_random_text])
+        modules.extend([
+            load_sample_prompts, load_concept_prompts, filename_prompt, select_prompt_input, select_random_text,
+            load_sample_config_json, select_sample_config_input
+        ])
 
         if config.masked_training:
             modules.append(generate_mask)
@@ -266,7 +280,7 @@ class DataLoaderText2ImageMixin:
             autocast_context: list[torch.autocast | None] = None,
             train_dtype: DataType | None = None,
     ):
-        sort_names = output_names + ['concept']
+        sort_names = output_names + ['concept', 'sample_config_overrides']
 
         output_names = output_names + [
             ('concept.loss_weight', 'loss_weight'),
@@ -295,7 +309,7 @@ class DataLoaderText2ImageMixin:
             batch_sorting = InlineAspectBatchSorting(resolution_in_name='crop_resolution', names=sort_names, batch_size=config.batch_size * world_size)
             distributed_sampler = InlineDistributedSampler(names=sort_names, world_size=world_size, rank=multi.rank())
 
-        prepare_batch_config = MapData(in_name='concept.overrides', out_name='config', map_fn=self.__create_prepare_batch_config(config))
+        prepare_batch_config = MapMultiData(in_names=['concept.overrides', 'sample_config_overrides'], out_name='config', map_fn=self.__create_prepare_batch_config(config))
 
         output = OutputPipelineModule(names=output_names)
 
@@ -313,16 +327,27 @@ class DataLoaderText2ImageMixin:
         return modules
 
     @staticmethod
-    def __create_prepare_batch_config(config: TrainConfig):
-        override_keys = [*ConceptOverridesConfig.default_values().types]
+    def __create_prepare_batch_config(config: TrainConfig) -> Callable:
+        override_types: dict[str, type] = ConceptOverridesConfig.default_values().types
+        override_types.pop('per_sample_config_source')
+        override_types.pop('per_sample_config_key')
 
-        def prepare_batch_config(overrides: dict):
+        def get_val(concept_overrides: dict, sample_overrides: dict | None, k: str, t: type):
             # Return overridden values if they exist, otherwise default to the current global value from TrainConfig.
-            # The 'overrides' dict may contain None values, which specifically mean "use global default".
+            # The '*_overrides' dicts may contain None values, which specifically mean "use global default".
             # The settings in TrainConfig can change during training, so always get the current value from the instance.
-            return {
-                k: v if (v := overrides.get(k)) is not None else getattr(config, k)
-                for k in override_keys
-            }
+            if sample_overrides:
+                v = sample_overrides.get(k)
+                if v is not None:
+                    try:
+                        return t(v)
+                    except Exception as ex:
+                        print(f"Warning: Failed to apply per-sample override ({k} = '{v}'): {ex}")
+
+            v = concept_overrides.get(k)
+            return v if v is not None else getattr(config, k)
+
+        def prepare_batch_config(concept_overrides: dict, sample_overrides: dict | None):
+            return {k: get_val(concept_overrides, sample_overrides, k, t) for k, t in override_types.items()}
 
         return prepare_batch_config

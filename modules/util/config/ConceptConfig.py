@@ -134,6 +134,9 @@ class ConceptOverridesConfig(BaseConfig):
     noising_bias: float
     timestep_shift: float
 
+    per_sample_config_source: str
+    per_sample_config_key: str
+
     def __init__(self, data: list[(str, Any, type, bool)]):
         super().__init__(data)
 
@@ -149,6 +152,9 @@ class ConceptOverridesConfig(BaseConfig):
         data.append(("noising_weight", None, float, True))
         data.append(("noising_bias", None, float, True))
         data.append(("timestep_shift", None, float, True))
+
+        data.append(("per_sample_config_source", "disabled", str, False))
+        data.append(("per_sample_config_key", "", str, False))
 
         return ConceptOverridesConfig(data)
 
